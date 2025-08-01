@@ -2,8 +2,6 @@ import { OpenAI } from "openai";
 import 'dotenv/config';
 import { Response, ResponseInput, ResponseOutputMessage } from "openai/resources/responses/responses.mjs";
 
-// console.log('test')
-// console.log(process.env.OPENAI_API_KEY)
 
 const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY});
 
@@ -31,10 +29,22 @@ const tools = [{
 const input : ResponseInput= [
     {
         role: "user",
-        content: "What's the weather like in new york today?"
+        content: "what's the weather like in new york today?"
+    },
+    // {
+    //     role: "user",
+    //     content: "why's the sky blue?"
+    // },
+    {
+        role: "system",
+        content: "you are a pirate use pirate vernacular when answering questions"
     }
 ];
 
+// Track complete conversation history
+const conversationHistory: ResponseInput = [...input];
+
+console.log("Initial input:", conversationHistory);
 
 const response: Response = await openai.responses.create({
     model: "gpt-4.1",
@@ -42,26 +52,39 @@ const response: Response = await openai.responses.create({
     tools,
 });
 
+// Loop to handle multiple tool calls
+let currentResponse = response;
+let hasMoreToolCalls = true;
 
-const toolCall = response.output[0];
-if (toolCall.type === 'function_call') {
-    if (toolCall.name ==='get_weather') {
-        const args = JSON.parse(toolCall.arguments)
-        const result = await getWeather(args.latitude, args.longitude);
-        input.push(toolCall);
-        input.push({
-            type: "function_call_output",
-            call_id: toolCall.call_id,
-            output: result.toString()
-        });
+while (hasMoreToolCalls) {
+    const toolCall = currentResponse.output[0];
+    
+    if (toolCall.type === 'message') {
+        console.log(toolCall.content[0]);
+        // Add the final message to conversation history
+        conversationHistory.push(toolCall);
+        hasMoreToolCalls = false; // No more tool calls, conversation is complete
+    } else if (toolCall.type === 'function_call') {
+        if (toolCall.name === 'get_weather') {
+            const args = JSON.parse(toolCall.arguments);
+            const result = await getWeather(args.latitude, args.longitude);
+            
+            // Add function call and result to conversation history
+            conversationHistory.push(toolCall);
+            conversationHistory.push({
+                type: "function_call_output",
+                call_id: toolCall.call_id,
+                output: result.toString()
+            });
+            
+            // Continue the conversation with the function result
+            currentResponse = await openai.responses.create({
+                model: "gpt-4.1",
+                input: conversationHistory,
+                tools,
+            });
+        }
     }
 }
 
-const response2 = await openai.responses.create({
-    model: "gpt-4.1",
-    input,
-    tools,
-    store: true,
-});
-
-console.log(response2.output_text)
+console.log("Complete conversation history:", conversationHistory);
